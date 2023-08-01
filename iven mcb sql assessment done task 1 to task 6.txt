@@ -1,0 +1,187 @@
+Step 1: Create the "XXBCM_ORDER_MGT" table using the script "DB_Prequisite.sql".
+
+sql
+-- DB_Prequisite.sql
+
+-- Assuming Oracle Database, create the table XXBCM_ORDER_MGT
+CREATE TABLE XXBCM_ORDER_MGT (
+    order_reference NUMBER PRIMARY KEY,
+    order_lines VARCHAR2(1000),
+    expense_type VARCHAR2(50),
+    amount NUMBER,
+    invoice_number VARCHAR2(50),
+    payment_status VARCHAR2(20)
+);
+-----------------------------------------------------------------
+
+Step 2: Based on the data provided, implement a normalized database schema with necessary tables, columns, data types, and constraints.\
+
+-- Creating the necessary tables for the normalized schema
+
+-- Table for Purchase Orders
+CREATE TABLE PURCHASE_ORDERS (
+    order_id NUMBER PRIMARY KEY,
+    order_reference NUMBER,
+    order_lines VARCHAR2(1000),
+    expense_type VARCHAR2(50),
+    amount NUMBER
+);
+
+-- Table for Invoices
+CREATE TABLE INVOICES (
+    invoice_id NUMBER PRIMARY KEY,
+    order_reference NUMBER,
+    invoice_number VARCHAR2(50),
+    amount NUMBER,
+    payment_status VARCHAR2(20)
+);
+
+-- Table for Payments
+CREATE TABLE PAYMENTS (
+    payment_id NUMBER PRIMARY KEY,
+    invoice_id NUMBER,
+    payment_amount NUMBER,
+    payment_date DATE
+);
+
+-- Add constraints
+ALTER TABLE PURCHASE_ORDERS ADD CONSTRAINT fk_order_ref
+    FOREIGN KEY (order_reference)
+    REFERENCES XXBCM_ORDER_MGT (order_reference);
+
+ALTER TABLE INVOICES ADD CONSTRAINT fk_order_ref
+    FOREIGN KEY (order_reference)
+    REFERENCES XXBCM_ORDER_MGT (order_reference);
+
+ALTER TABLE PAYMENTS ADD CONSTRAINT fk_invoice_id
+    FOREIGN KEY (invoice_id)
+    REFERENCES INVOICES (invoice_id);
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+Step 3: Develop a SQL procedure to trigger a migration process to load data from the "XXBCM_ORDER_MGT" table into the new schema tables.
+
+-- Procedure to migrate data from XXBCM_ORDER_MGT to the new schema
+CREATE OR REPLACE PROCEDURE MIGRATE_DATA AS
+BEGIN
+    FOR order_rec IN (SELECT * FROM XXBCM_ORDER_MGT) LOOP
+        IF order_rec.expense_type = 'Purchase Order' THEN
+            INSERT INTO PURCHASE_ORDERS (order_id, order_reference, order_lines, expense_type, amount)
+            VALUES (order_rec.order_reference, order_rec.order_reference, order_rec.order_lines, order_rec.expense_type, order_rec.amount);
+        ELSIF order_rec.expense_type = 'Invoice' THEN
+            INSERT INTO INVOICES (invoice_id, order_reference, invoice_number, amount, payment_status)
+            VALUES (order_rec.order_reference, order_rec.order_reference, order_rec.invoice_number, order_rec.amount, order_rec.payment_status);
+        END IF;
+    END LOOP;
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Now you have the necessary SQL scripts to create the required tables and procedures. Please ensure that you have appropriate permissions to create objects in the database before executing these scripts. Once you have created the objects, you can call the MIGRATE_DATA procedure to transfer the data from the "XXBCM_ORDER_MGT" table to the new schema tables. Make sure you have data in the "XXBCM_ORDER_MGT" table before running the migration procedure.
+
+Remember to upload all your scripts, including the "DB_Prequisite.sql" and the schema creation scripts, to a GitHub repository and share the link with the relevant parties for the assignment.
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Task 4: Stored Procedure or Function to generate the report displaying a summary of Orders with their corresponding list of distinct invoices and their total amount.
+
+sql
+CREATE OR REPLACE FUNCTION GET_ORDER_SUMMARY_REPORT RETURN SYS_REFCURSOR IS
+  v_cursor SYS_REFCURSOR;
+BEGIN
+  OPEN v_cursor FOR
+    SELECT 
+      TO_NUMBER(SUBSTR(order_reference, 3)) AS order_reference,
+      TO_CHAR(order_date, 'MON-YYYY') AS order_period,
+      INITCAP(Supplier_Name) AS Supplier_Name,
+      TO_CHAR(order_total_amount, '99,999,990.00') AS order_total_amount,
+      order_status,
+      LISTAGG(invoice_reference, '|') WITHIN GROUP (ORDER BY invoice_reference) AS invoice_references,
+      TO_CHAR(SUM(invoice_total_amount), '99,999,990.00') AS invoice_total_amount,
+      CASE 
+        WHEN COUNT(CASE WHEN invoice_status = 'Paid' THEN 1 END) = COUNT(*) THEN 'OK'
+        WHEN COUNT(CASE WHEN invoice_status = 'Pending' THEN 1 END) > 0 THEN 'To follow up'
+        ELSE 'To verify'
+      END AS action
+    FROM 
+      orders
+    GROUP BY 
+      TO_NUMBER(SUBSTR(order_reference, 3)),
+      TO_CHAR(order_date, 'MON-YYYY'),
+      INITCAP(Supplier_Name),
+      TO_CHAR(order_total_amount, '99,999,990.00'),
+      order_status
+    ORDER BY 
+      order_date DESC;
+
+  RETURN v_cursor;
+END;
+/
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Task 5: Stored Procedure or Function to return details for the SECOND (2nd) highest Order Total Amount.
+
+CREATE OR REPLACE FUNCTION GET_SECOND_HIGHEST_ORDER RETURN SYS_REFCURSOR IS
+  v_cursor SYS_REFCURSOR;
+BEGIN
+  OPEN v_cursor FOR
+    SELECT 
+      TO_NUMBER(SUBSTR(order_reference, 3)) AS order_reference,
+      TO_CHAR(order_date, 'Month DD, YYYY') AS order_date,
+      UPPER(Supplier_Name) AS Supplier_Name,
+      TO_CHAR(order_total_amount, '99,999,990.00') AS order_total_amount,
+      order_status,
+      LISTAGG(invoice_reference, '|') WITHIN GROUP (ORDER BY invoice_reference) AS invoice_references
+    FROM 
+      orders
+    ORDER BY 
+      order_total_amount DESC;
+
+  FETCH v_cursor INTO v_result;
+  FETCH v_cursor INTO v_result;
+  
+  CLOSE v_cursor;
+  RETURN v_result;
+END;
+/
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Task 6: Stored Procedure or Function to list all suppliers with their respective number of orders and total amount ordered between 01 January 2022 and 31 August 2022.
+
+CREATE OR REPLACE FUNCTION GET_SUPPLIER_ORDERS_SUMMARY(
+    start_date DATE,
+    end_date DATE
+) RETURN SYS_REFCURSOR IS
+  v_cursor SYS_REFCURSOR;
+BEGIN
+  OPEN v_cursor FOR
+    SELECT 
+      INITCAP(Supplier_Name) AS Supplier_Name,
+      Supplier_Contact_Name AS Supplier_Contact_Name,
+      TO_CHAR(Supplier_Contact_No_1, '999-9999') AS Supplier_Contact_No_1,
+      TO_CHAR(Supplier_Contact_No_2, '999-9999') AS Supplier_Contact_No_2,
+      COUNT(*) AS Total_Orders,
+      TO_CHAR(SUM(order_total_amount), '99,999,990.00') AS Order_Total_Amount
+    FROM 
+      orders
+    WHERE 
+      order_date BETWEEN start_date AND end_date
+    GROUP BY 
+      INITCAP(Supplier_Name),
+      Supplier_Contact_Name,
+      Supplier_Contact_No_1,
+      Supplier_Contact_No_2;
+
+  RETURN v_cursor;
+END;
+/
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Note: I've assumed the existence of a table named "orders" in your database that contains the necessary data for these reports. You may need to adjust the table and column names according to your actual database schema.
+
+With these stored procedures and functions created, you can execute them to get the required information. Remember to call the stored procedures with appropriate parameters, such as date ranges for Task 6.
